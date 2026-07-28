@@ -1,11 +1,14 @@
-from fastapi import FastAPI
+import logging
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.core.config import get_settings
 from app.core.redis_client import init_redis, close_redis
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.api.endpoints import auth, products, categories, orders, pages, users, chats, settings, dashboard
 from app.websocket import chat as chat_websocket
 
+logger = logging.getLogger(__name__)
 app_settings = get_settings()
 
 app = FastAPI(
@@ -14,6 +17,15 @@ app = FastAPI(
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {str(exc)}"},
+    )
 
 # CORS
 app.add_middleware(
@@ -36,6 +48,13 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     await close_redis()
+
+
+# Root redirect to docs
+@app.get("/")
+async def root():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/api/docs")
 
 
 # Health check

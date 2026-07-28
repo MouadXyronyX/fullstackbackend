@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from datetime import datetime, timezone
 from app.services.db import SupabaseDB, get_db
@@ -10,8 +11,8 @@ from app.schemas.user import (
     UserCreate, UserLogin, AdminLogin, UserResponse, TokenResponse,
     RefreshRequest, TOTPSetupResponse, TOTPVerifyRequest, UserUpdate
 )
-from app.core.redis_client import get_redis
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -34,6 +35,14 @@ def _create_tokens(user: dict, db: SupabaseDB) -> dict:
     }
 
 
+def _safe_verify(plain: str, hashed: str) -> bool:
+    try:
+        return verify_password(plain, hashed)
+    except Exception as e:
+        logger.error(f"Password verification error: {e}")
+        return False
+
+
 @router.post("/register", response_model=TokenResponse)
 def register(data: UserCreate, db: SupabaseDB = Depends(get_db)):
     if not data.email and not data.phone:
@@ -50,16 +59,24 @@ def register(data: UserCreate, db: SupabaseDB = Depends(get_db)):
     role = db.get_one("roles", {"name": f"eq.customer"})
     if not role:
         role = db.insert("roles", {"name": "customer"})
+    if not role:
+        raise HTTPException(status_code=500, detail="Failed to create or retrieve user role")
 
-    user = db.insert("users", {
-        "name": data.name,
-        "email": data.email,
-        "phone": data.phone,
-        "password_hash": get_password_hash(data.password),
-        "role_id": role["id"],
-        "is_active": True,
-    })
-    return _create_tokens(user, db)
+    try:
+        user = db.insert("users", {
+            "name": data.name,
+            "email": data.email,
+            "phone": data.phone,
+            "password_hash": get_password_hash(data.password),
+            "role_id": role["id"] if isinstance(role, dict) else role[0]["id"],
+            "is_active": True,
+        })
+        if not user:
+            raise HTTPException(status_code=500, detail="Failed to create user")
+        return _create_tokens(user, db)
+    except Exception as e:
+        logger.error(f"Registration error: {e}")
+        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -70,7 +87,7 @@ def login(data: UserLogin, db: SupabaseDB = Depends(get_db)):
     elif data.phone:
         user = db.get_one("users", {"phone": f"eq.{data.phone}"})
 
-    if not user or not verify_password(data.password, user["password_hash"]):
+    if not user or not _safe_verify(data.password, user.get("password_hash", "")):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if not user.get("is_active", False):
@@ -84,14 +101,22 @@ def login(data: UserLogin, db: SupabaseDB = Depends(get_db)):
         if locked_until > datetime.now(timezone.utc):
             raise HTTPException(status_code=423, detail="Account is locked. Try again later.")
 
-    db.update("users", user["id"], {"failed_login_attempts": 0})
-    return _create_tokens(user, db)
+    try:
+        db.update("users", user["id"], {"failed_login_attempts": 0})
+    except Exception as e:
+        logger.error(f"Login update error: {e}")
+
+    try:
+        return _create_tokens(user, db)
+    except Exception as e:
+        logger.error(f"Token creation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
 
 
 @router.post("/admin-login", response_model=TokenResponse)
 def admin_login(data: AdminLogin, db: SupabaseDB = Depends(get_db)):
     user = db.get_one("users", {"email": f"eq.{data.email}", "role_id": f"eq.1"})
-    if not user or not verify_password(data.password, user["password_hash"]):
+    if not user or not _safe_verify(data.password, user.get("password_hash", "")):
         raise HTTPException(status_code=401, detail="Invalid admin credentials")
 
     if not user.get("is_active", False):
@@ -114,8 +139,16 @@ def admin_login(data: AdminLogin, db: SupabaseDB = Depends(get_db)):
             "totp_required": True,
         }
 
-    db.update("users", user["id"], {"failed_login_attempts": 0})
-    return _create_tokens(user, db)
+    try:
+        db.update("users", user["id"], {"failed_login_attempts": 0})
+    except Exception as e:
+        logger.error(f"Admin login update error: {e}")
+
+    try:
+        return _create_tokens(user, db)
+    except Exception as e:
+        logger.error(f"Admin token creation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Admin login failed: {str(e)}")
 
 
 @router.post("/admin-login-totp", response_model=TokenResponse)
