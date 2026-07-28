@@ -27,10 +27,15 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": f"Internal server error: {str(exc)}"},
     )
 
-# CORS
+# CORS — support multiple origins via comma-separated FRONTEND_URL
+origins = [
+    o.strip()
+    for o in app_settings.frontend_url.split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[app_settings.frontend_url],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
