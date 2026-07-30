@@ -12,6 +12,14 @@ from app.core.redis_client import get_redis
 router = APIRouter()
 
 
+def _enrich_items(items: list[dict], db: SupabaseDB) -> list[dict]:
+    for item in items:
+        product = db.get_by_id("products", item["product_id"])
+        if product:
+            item["product_name"] = product.get("name")
+    return items
+
+
 def generate_order_code() -> str:
     return "AQ-" + "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
 
@@ -55,7 +63,7 @@ def list_orders(
                         order="created_at.desc", limit=limit, offset=skip)
     result = []
     for o in orders:
-        items = db.get_all("order_items", filters={"order_id": f"eq.{o['id']}"})
+        items = _enrich_items(db.get_all("order_items", filters={"order_id": f"eq.{o['id']}"}), db)
         o["items"] = items
         result.append(OrderResponse.model_validate(o))
     return result
@@ -67,7 +75,7 @@ def get_my_orders(user: dict = Depends(get_current_user), db: SupabaseDB = Depen
                         order="created_at.desc")
     result = []
     for o in orders:
-        items = db.get_all("order_items", filters={"order_id": f"eq.{o['id']}"})
+        items = _enrich_items(db.get_all("order_items", filters={"order_id": f"eq.{o['id']}"}), db)
         o["items"] = items
         result.append(OrderResponse.model_validate(o))
     return result
@@ -78,7 +86,7 @@ def track_order(data: OrderTrackRequest = Depends(), db: SupabaseDB = Depends(ge
     order = db.get_one("orders", {"order_code": f"eq.{data.order_code}"})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    items = db.get_all("order_items", filters={"order_id": f"eq.{order['id']}"})
+    items = _enrich_items(db.get_all("order_items", filters={"order_id": f"eq.{order['id']}"}), db)
     order["items"] = items
     return OrderResponse.model_validate(order)
 
@@ -88,7 +96,7 @@ def get_order(order_id: int, db: SupabaseDB = Depends(get_db), admin=Depends(req
     order = db.get_by_id("orders", order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    items = db.get_all("order_items", filters={"order_id": f"eq.{order_id}"})
+    items = _enrich_items(db.get_all("order_items", filters={"order_id": f"eq.{order_id}"}), db)
     order["items"] = items
     return OrderResponse.model_validate(order)
 
@@ -157,7 +165,7 @@ def create_order(data: OrderCreate, db: SupabaseDB = Depends(get_db)):
         except Exception:
             pass
 
-    items = db.get_all("order_items", filters={"order_id": f"eq.{order['id']}"})
+    items = _enrich_items(db.get_all("order_items", filters={"order_id": f"eq.{order['id']}"}), db)
     order["items"] = items
     return OrderResponse.model_validate(order)
 
@@ -174,7 +182,7 @@ def update_order_status(
         raise HTTPException(status_code=404, detail="Order not found")
     db.update("orders", order_id, {"status": data.status})
     order = db.get_by_id("orders", order_id)
-    items = db.get_all("order_items", filters={"order_id": f"eq.{order_id}"})
+    items = _enrich_items(db.get_all("order_items", filters={"order_id": f"eq.{order_id}"}), db)
     order["items"] = items
     return OrderResponse.model_validate(order)
 
