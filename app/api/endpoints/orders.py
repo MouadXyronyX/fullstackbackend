@@ -134,8 +134,7 @@ def create_order(data: OrderCreate, db: SupabaseDB = Depends(get_db)):
     }
     if data.guest_email:
         order_data["guest_email"] = data.guest_email
-    if data.address:
-        order_data["address"] = data.address
+    order_data["address"] = data.address or ""
     if data.note:
         order_data["note"] = data.note
     order = db.insert("orders", order_data)
