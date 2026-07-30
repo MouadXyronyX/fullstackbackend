@@ -23,9 +23,15 @@ app = FastAPI(
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    origin = request.headers.get("origin", "")
+    headers = {}
+    if origin:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
     return JSONResponse(
         status_code=500,
         content={"detail": f"Internal server error: {str(exc)}"},
+        headers=headers,
     )
 
 # CORS — support multiple origins via comma-separated FRONTEND_URL

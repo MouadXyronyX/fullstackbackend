@@ -35,5 +35,23 @@ def delete_user(user_id: int, db: SupabaseDB = Depends(get_db), admin=Depends(re
     existing = db.get_by_id("users", user_id)
     if not existing:
         raise HTTPException(status_code=404, detail="User not found")
-    db.delete("users", user_id)
+    try:
+        chats = db.get_all("chats", filters={"user_id": f"eq.{user_id}"}, columns="id")
+        for c in chats:
+            db.delete_many("messages", {"chat_id": f"eq.{c['id']}"})
+            db.delete("chats", c["id"])
+    except Exception:
+        pass
+    try:
+        orders = db.get_all("orders", filters={"user_id": f"eq.{user_id}"}, columns="id")
+        for o in orders:
+            db.delete_many("order_items", {"order_id": f"eq.{o['id']}"})
+            db.delete("orders", o["id"])
+    except Exception:
+        pass
+    try:
+        db.delete("users", user_id)
+    except Exception:
+        db.update("users", user_id, {"is_active": False})
+        return {"detail": "User disabled instead of deleted"}
     return {"detail": "User deleted successfully"}
