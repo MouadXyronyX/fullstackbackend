@@ -8,7 +8,10 @@ router = APIRouter()
 
 
 def _load_variants(product_id: int, db: SupabaseDB) -> list:
-    return db.get_all("product_variants", filters={"product_id": f"eq.{product_id}"}, order="name.asc")
+    try:
+        return db.get_all("product_variants", filters={"product_id": f"eq.{product_id}"}, order="name.asc")
+    except Exception:
+        return []
 
 
 @router.get("/", response_model=List[ProductResponse])
@@ -86,14 +89,17 @@ def create_product(data: ProductCreate, db: SupabaseDB = Depends(get_db), admin=
         })
     if images_data:
         db.insert("product_images", images_data)
-    for v in data.variants:
-        db.insert("product_variants", {
-            "product_id": product["id"],
-            "name": v.name,
-            "price": v.price,
-            "image_url": v.image_url,
-            "is_available": v.is_available,
-        })
+    try:
+        for v in data.variants:
+            db.insert("product_variants", {
+                "product_id": product["id"],
+                "name": v.name,
+                "price": v.price,
+                "image_url": v.image_url,
+                "is_available": v.is_available,
+            })
+    except Exception:
+        pass
     images = db.get_all("product_images", filters={"product_id": f"eq.{product['id']}"}, order="order.asc")
     product["images"] = images
     product["variants"] = _load_variants(product["id"], db)
@@ -120,15 +126,18 @@ def update_product(product_id: int, data: ProductUpdate, db: SupabaseDB = Depend
         if images_data:
             db.insert("product_images", images_data)
     if data.variants is not None:
-        db.delete_many("product_variants", {"product_id": f"eq.{product_id}"})
-        for v in data.variants:
-            db.insert("product_variants", {
-                "product_id": product_id,
-                "name": v.name,
-                "price": v.price,
-                "image_url": v.image_url,
-                "is_available": v.is_available,
-            })
+        try:
+            db.delete_many("product_variants", {"product_id": f"eq.{product_id}"})
+            for v in data.variants:
+                db.insert("product_variants", {
+                    "product_id": product_id,
+                    "name": v.name,
+                    "price": v.price,
+                    "image_url": v.image_url,
+                    "is_available": v.is_available,
+                })
+        except Exception:
+            pass
     product = db.get_by_id("products", product_id)
     images = db.get_all("product_images", filters={"product_id": f"eq.{product_id}"}, order="order.asc")
     product["images"] = images
@@ -142,6 +151,9 @@ def delete_product(product_id: int, db: SupabaseDB = Depends(get_db), admin=Depe
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
     db.delete_many("product_images", {"product_id": f"eq.{product_id}"})
-    db.delete_many("product_variants", {"product_id": f"eq.{product_id}"})
+    try:
+        db.delete_many("product_variants", {"product_id": f"eq.{product_id}"})
+    except Exception:
+        pass
     db.delete("products", product_id)
     return {"detail": "Product deleted successfully"}
