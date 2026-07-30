@@ -1,3 +1,4 @@
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 from app.services.db import SupabaseDB, get_db
@@ -41,5 +42,13 @@ def delete_category(category_id: int, db: SupabaseDB = Depends(get_db), admin=De
     existing = db.get_by_id("categories", category_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Category not found")
-    db.delete("categories", category_id)
+    try:
+        db.delete("categories", category_id)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 409:
+            raise HTTPException(
+                status_code=400,
+                detail="لا يمكن حذف هذا القسم لأنه يحتوي على منتجات. قم بنقل المنتجات أو حذفها أولاً."
+            )
+        raise
     return {"detail": "Category deleted successfully"}
