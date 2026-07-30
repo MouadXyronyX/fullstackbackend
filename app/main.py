@@ -7,6 +7,7 @@ from app.core.redis_client import init_redis, close_redis
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.api.endpoints import auth, products, categories, orders, pages, users, chats, settings, dashboard
 from app.websocket import chat as chat_websocket
+from app.services.db import SupabaseDB
 
 logger = logging.getLogger(__name__)
 app_settings = get_settings()
@@ -47,6 +48,20 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 @app.on_event("startup")
 async def startup():
+    from datetime import datetime, timedelta
+    try:
+        db = SupabaseDB()
+        cutoff = (datetime.utcnow() - timedelta(days=15)).isoformat()
+        old_orders = db.get_all("orders", columns="id", filters={"created_at": f"lt.{cutoff}"})
+        for o in old_orders:
+            db.delete_many("order_items", {"order_id": f"eq.{o['id']}"})
+            db.delete("orders", o["id"])
+        old_chats = db.get_all("chats", columns="id", filters={"created_at": f"lt.{cutoff}"})
+        for c in old_chats:
+            db.delete_many("messages", {"chat_id": f"eq.{c['id']}"})
+            db.delete("chats", c["id"])
+    except Exception:
+        pass
     await init_redis()
 
 

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 import secrets
 import string
+from datetime import datetime, timedelta
 from app.services.db import SupabaseDB, get_db
 from app.core.dependencies import get_current_user, require_admin
 from app.models.product import Product
@@ -13,6 +14,30 @@ router = APIRouter()
 
 def generate_order_code() -> str:
     return "AQ-" + "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
+
+
+def _cleanup_old_records(db: SupabaseDB):
+    cutoff = (datetime.utcnow() - timedelta(days=15)).isoformat()
+    old_orders = db.get_all("orders", columns="id", filters={"created_at": f"lt.{cutoff}"})
+    if old_orders:
+        old_ids = [o["id"] for o in old_orders]
+        for oid in old_ids:
+            db.delete_many("order_items", {"order_id": f"eq.{oid}"})
+        for oid in old_ids:
+            db.delete("orders", oid)
+    old_chats = db.get_all("chats", columns="id", filters={"created_at": f"lt.{cutoff}"})
+    if old_chats:
+        old_cids = [c["id"] for c in old_chats]
+        for cid in old_cids:
+            db.delete_many("messages", {"chat_id": f"eq.{cid}"})
+        for cid in old_cids:
+            db.delete("chats", cid)
+
+
+@router.get("/cleanup")
+def cleanup_old_records(admin=Depends(require_admin), db: SupabaseDB = Depends(get_db)):
+    _cleanup_old_records(db)
+    return {"detail": "تم حذف السجلات القديمة"}
 
 
 @router.get("/", response_model=List[OrderResponse])
@@ -50,9 +75,9 @@ def get_my_orders(user: dict = Depends(get_current_user), db: SupabaseDB = Depen
 
 @router.get("/track", response_model=OrderResponse)
 def track_order(data: OrderTrackRequest = Depends(), db: SupabaseDB = Depends(get_db)):
-    order = db.get_one("orders", {"order_code": f"eq.{data.order_code}", "guest_phone": f"eq.{data.phone}"})
+    order = db.get_one("orders", {"order_code": f"eq.{data.order_code}"})
     if not order:
-        raise HTTPException(status_code=404, detail="Order not found or phone mismatch")
+        raise HTTPException(status_code=404, detail="Order not found")
     items = db.get_all("order_items", filters={"order_id": f"eq.{order['id']}"})
     order["items"] = items
     return OrderResponse.model_validate(order)
@@ -78,11 +103,18 @@ def create_order(data: OrderCreate, db: SupabaseDB = Depends(get_db)):
             raise HTTPException(status_code=404, detail=f"Product {item.product_id} not found")
         if not product.get("is_available", False):
             raise HTTPException(status_code=400, detail=f"Product '{product['name']}' is not available")
-        total_price += item.price_at_order * item.quantity
+        item_price = item.price_at_order
+        if item.variant_id:
+            variant = db.get_by_id("product_variants", item.variant_id)
+            if variant and variant.get("price"):
+                item_price = variant["price"]
+        total_price += item_price * item.quantity
         order_items_data.append({
             "product_id": item.product_id,
             "quantity": item.quantity,
-            "price_at_order": item.price_at_order,
+            "price_at_order": item_price,
+            "variant_id": item.variant_id,
+            "variant_name": item.variant_name,
         })
 
     order = db.insert("orders", {

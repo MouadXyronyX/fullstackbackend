@@ -7,6 +7,10 @@ from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, P
 router = APIRouter()
 
 
+def _load_variants(product_id: int, db: SupabaseDB) -> list:
+    return db.get_all("product_variants", filters={"product_id": f"eq.{product_id}"}, order="name.asc")
+
+
 @router.get("/", response_model=List[ProductResponse])
 def list_products(
     category_id: Optional[int] = Query(None),
@@ -38,8 +42,24 @@ def list_products(
     for p in products:
         images = db.get_all("product_images", filters={"product_id": f"eq.{p['id']}"}, order="order.asc")
         p["images"] = images
+        p["variants"] = _load_variants(p["id"], db)
         result.append(ProductResponse.model_validate(p))
     return result
+
+
+@router.get("/count")
+def count_products(
+    category_id: Optional[int] = Query(None),
+    search: Optional[str] = Query(None),
+    db: SupabaseDB = Depends(get_db),
+):
+    filters = {}
+    if category_id is not None:
+        filters["category_id"] = f"eq.{category_id}"
+    if search:
+        filters["name"] = f"ilike.%{search}%"
+    count = db.count("products", filters=filters if filters else None)
+    return {"count": count}
 
 
 @router.get("/{product_id}", response_model=ProductResponse)
@@ -49,12 +69,13 @@ def get_product(product_id: int, db: SupabaseDB = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Product not found")
     images = db.get_all("product_images", filters={"product_id": f"eq.{product_id}"}, order="order.asc")
     product["images"] = images
+    product["variants"] = _load_variants(product_id, db)
     return ProductResponse.model_validate(product)
 
 
 @router.post("/", response_model=ProductResponse, status_code=201)
 def create_product(data: ProductCreate, db: SupabaseDB = Depends(get_db), admin=Depends(require_admin)):
-    product_data = data.model_dump(exclude={"images"})
+    product_data = data.model_dump(exclude={"images", "variants"})
     product = db.insert("products", product_data)
     images_data = []
     for idx, img in enumerate(data.images):
@@ -65,8 +86,17 @@ def create_product(data: ProductCreate, db: SupabaseDB = Depends(get_db), admin=
         })
     if images_data:
         db.insert("product_images", images_data)
+    for v in data.variants:
+        db.insert("product_variants", {
+            "product_id": product["id"],
+            "name": v.name,
+            "price": v.price,
+            "image_url": v.image_url,
+            "is_available": v.is_available,
+        })
     images = db.get_all("product_images", filters={"product_id": f"eq.{product['id']}"}, order="order.asc")
     product["images"] = images
+    product["variants"] = _load_variants(product["id"], db)
     return ProductResponse.model_validate(product)
 
 
@@ -75,7 +105,7 @@ def update_product(product_id: int, data: ProductUpdate, db: SupabaseDB = Depend
     existing = db.get_by_id("products", product_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
-    update_data = data.model_dump(exclude={"images"}, exclude_unset=True)
+    update_data = data.model_dump(exclude={"images", "variants"}, exclude_unset=True)
     if update_data:
         db.update("products", product_id, update_data)
     if data.images is not None:
@@ -89,9 +119,20 @@ def update_product(product_id: int, data: ProductUpdate, db: SupabaseDB = Depend
             })
         if images_data:
             db.insert("product_images", images_data)
+    if data.variants is not None:
+        db.delete_many("product_variants", {"product_id": f"eq.{product_id}"})
+        for v in data.variants:
+            db.insert("product_variants", {
+                "product_id": product_id,
+                "name": v.name,
+                "price": v.price,
+                "image_url": v.image_url,
+                "is_available": v.is_available,
+            })
     product = db.get_by_id("products", product_id)
     images = db.get_all("product_images", filters={"product_id": f"eq.{product_id}"}, order="order.asc")
     product["images"] = images
+    product["variants"] = _load_variants(product_id, db)
     return ProductResponse.model_validate(product)
 
 
@@ -101,5 +142,6 @@ def delete_product(product_id: int, db: SupabaseDB = Depends(get_db), admin=Depe
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
     db.delete_many("product_images", {"product_id": f"eq.{product_id}"})
+    db.delete_many("product_variants", {"product_id": f"eq.{product_id}"})
     db.delete("products", product_id)
     return {"detail": "Product deleted successfully"}

@@ -7,6 +7,8 @@ class OrderItemCreate(BaseModel):
     product_id: int
     quantity: int = Field(..., ge=1)
     price_at_order: float
+    variant_id: Optional[int] = None
+    variant_name: Optional[str] = None
 
 
 class OrderCreate(BaseModel):
@@ -15,7 +17,7 @@ class OrderCreate(BaseModel):
     guest_email: Optional[str] = None
     wilaya: str = Field(..., min_length=1)
     commune: str = Field(..., min_length=1)
-    address: str = Field(..., min_length=5)
+    address: Optional[str] = Field(None, min_length=5)
     note: Optional[str] = None
     items: List[OrderItemCreate] = Field(..., min_length=1)
     captcha_token: Optional[str] = None
@@ -27,6 +29,8 @@ class OrderItemResponse(BaseModel):
     quantity: int
     price_at_order: float
     product_name: Optional[str] = None
+    variant_id: Optional[int] = None
+    variant_name: Optional[str] = None
 
     model_config = {"from_attributes": True, "extra": "ignore"}
 
@@ -40,7 +44,7 @@ class OrderResponse(BaseModel):
     guest_email: Optional[str]
     wilaya: str
     commune: str
-    address: str
+    address: Optional[str]
     note: Optional[str]
     status: str
     total_price: float
@@ -56,4 +60,3 @@ class OrderStatusUpdate(BaseModel):
 
 class OrderTrackRequest(BaseModel):
     order_code: str
-    phone: str
