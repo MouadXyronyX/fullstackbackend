@@ -30,6 +30,7 @@ class UserResponse(BaseModel):
     is_active: Optional[bool] = True
     totp_enabled: Optional[bool] = False
     created_at: Optional[datetime]
+    password_hash: Optional[str] = None
 
     model_config = {"from_attributes": True, "extra": "ignore"}
 
