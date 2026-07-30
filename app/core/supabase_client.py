@@ -72,9 +72,10 @@ class SupabaseClient:
         try:
             resp.raise_for_status()
         except httpx.HTTPStatusError:
-            logger.error(f"Supabase insert error {resp.status_code} on {table_name}: {resp.text}")
+            detail = f"Supabase error {resp.status_code} on {table_name}: {resp.text}"
+            logger.error(detail)
             logger.error(f"Data: {json_data}")
-            raise
+            raise httpx.HTTPStatusError(f"{detail} | Data: {json_data}", request=resp.request, response=resp)
         result = resp.json()
         if is_list:
             return result
