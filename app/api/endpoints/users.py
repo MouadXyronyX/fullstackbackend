@@ -50,6 +50,14 @@ def delete_user(user_id: int, db: SupabaseDB = Depends(get_db), admin=Depends(re
     except Exception:
         pass
     try:
+        db.delete_many("sessions", {"user_id": f"eq.{user_id}"})
+    except Exception:
+        pass
+    try:
+        db.delete_many("notifications", {"reference_id": f"eq.{user_id}"})
+    except Exception:
+        pass
+    try:
         db.delete("users", user_id)
     except Exception:
         db.update("users", user_id, {"is_active": False})
