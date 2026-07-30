@@ -27,7 +27,7 @@ class UserResponse(BaseModel):
     email: Optional[str]
     phone: Optional[str]
     role_id: int
-    is_active: bool
+    is_active: Optional[bool] = True
     totp_enabled: Optional[bool] = False
     created_at: Optional[datetime]
 
