@@ -120,11 +120,16 @@ def create_order(data: OrderCreate, db: SupabaseDB = Depends(get_db)):
             except Exception:
                 pass
         total_price += item_price * item.quantity
-        order_items_data.append({
+        oi = {
             "product_id": item.product_id,
             "quantity": item.quantity,
             "price_at_order": item_price,
-        })
+        }
+        if item.variant_id:
+            oi["variant_id"] = item.variant_id
+        if item.variant_name:
+            oi["variant_name"] = item.variant_name
+        order_items_data.append(oi)
 
     order_data = {
         "order_code": generate_order_code(),
