@@ -1,6 +1,9 @@
+import logging
 import httpx
 from typing import Any, Optional, Union
 from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -66,7 +69,12 @@ class SupabaseClient:
         if returning:
             headers["Prefer"] = "return=representation"
         resp = self._client.post(f"/{table_name}", json=json_data, headers=headers)
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError:
+            logger.error(f"Supabase insert error {resp.status_code} on {table_name}: {resp.text}")
+            logger.error(f"Data: {json_data}")
+            raise
         result = resp.json()
         if is_list:
             return result
