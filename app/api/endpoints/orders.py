@@ -109,26 +109,33 @@ def create_order(data: OrderCreate, db: SupabaseDB = Depends(get_db)):
             if variant and variant.get("price"):
                 item_price = variant["price"]
         total_price += item_price * item.quantity
-        order_items_data.append({
+        oi = {
             "product_id": item.product_id,
             "quantity": item.quantity,
             "price_at_order": item_price,
-            "variant_id": item.variant_id,
-            "variant_name": item.variant_name,
-        })
+        }
+        if item.variant_id:
+            oi["variant_id"] = item.variant_id
+        if item.variant_name:
+            oi["variant_name"] = item.variant_name
+        order_items_data.append(oi)
 
-    order = db.insert("orders", {
+    order_data = {
         "order_code": generate_order_code(),
         "guest_name": data.guest_name,
         "guest_phone": data.guest_phone,
-        "guest_email": data.guest_email,
         "wilaya": data.wilaya,
         "commune": data.commune,
-        "address": data.address,
-        "note": data.note,
         "status": "pending",
         "total_price": total_price,
-    })
+    }
+    if data.guest_email:
+        order_data["guest_email"] = data.guest_email
+    if data.address:
+        order_data["address"] = data.address
+    if data.note:
+        order_data["note"] = data.note
+    order = db.insert("orders", order_data)
 
     for oi in order_items_data:
         oi["order_id"] = order["id"]
