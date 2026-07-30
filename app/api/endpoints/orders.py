@@ -105,9 +105,12 @@ def create_order(data: OrderCreate, db: SupabaseDB = Depends(get_db)):
             raise HTTPException(status_code=400, detail=f"Product '{product['name']}' is not available")
         item_price = item.price_at_order
         if item.variant_id:
-            variant = db.get_by_id("product_variants", item.variant_id)
-            if variant and variant.get("price"):
-                item_price = variant["price"]
+            try:
+                variant = db.get_by_id("product_variants", item.variant_id)
+                if variant and variant.get("price"):
+                    item_price = variant["price"]
+            except Exception:
+                pass
         total_price += item_price * item.quantity
         oi = {
             "product_id": item.product_id,
