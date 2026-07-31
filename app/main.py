@@ -2,8 +2,12 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi import _rate_limit_exceeded_handler
 from app.core.config import get_settings
 from app.core.redis_client import init_redis, close_redis
+from app.core.rate_limit import limiter
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.api.endpoints import auth, products, categories, orders, pages, users, chats, settings, dashboard
 from app.websocket import chat as chat_websocket
@@ -19,34 +23,40 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
-
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    origin = request.headers.get("origin", "")
-    headers = {}
-    if origin:
-        headers["Access-Control-Allow-Origin"] = origin
-        headers["Access-Control-Allow-Credentials"] = "true"
-    return JSONResponse(
-        status_code=500,
-        content={"detail": f"Internal server error: {str(exc)}"},
-        headers=headers,
-    )
-
-# CORS — support multiple origins via comma-separated FRONTEND_URL
-origins = [
+allowed_origins = [
     o.strip()
     for o in app_settings.frontend_url.split(",")
     if o.strip()
 ]
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    headers = {}
+    origin = request.headers.get("origin", "")
+    if origin in allowed_origins:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+        headers=headers,
+    )
+
+# CORS — support multiple origins via comma-separated FRONTEND_URL
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # Security Headers
 app.add_middleware(SecurityHeadersMiddleware)

@@ -1,7 +1,8 @@
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status
-from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from datetime import datetime, timezone, timedelta
 from app.services.db import SupabaseDB, get_db
+from app.core.rate_limit import limiter
 from app.core.security import (
     verify_password, get_password_hash, create_access_token, create_refresh_token,
     decode_token, generate_totp_secret, get_totp_uri, generate_totp_qrcode, verify_totp
@@ -14,6 +15,9 @@ from app.schemas.user import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_MINUTES = 15
 
 
 def _create_tokens(user: dict, db: SupabaseDB) -> dict:
@@ -43,8 +47,35 @@ def _safe_verify(plain: str, hashed: str) -> bool:
         return False
 
 
+def _register_failed_attempt(db: SupabaseDB, user: dict):
+    try:
+        attempts = int(user.get("failed_login_attempts") or 0) + 1
+        update = {"failed_login_attempts": attempts}
+        if attempts >= MAX_FAILED_ATTEMPTS:
+            update["locked_until"] = (
+                datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_MINUTES)
+            ).isoformat()
+        db.update("users", user["id"], update)
+    except Exception as e:
+        logger.error(f"Failed-attempt update error: {e}")
+
+
+def _check_lockout(user: dict):
+    locked_until = user.get("locked_until")
+    if not locked_until:
+        return
+    if isinstance(locked_until, str):
+        try:
+            locked_until = datetime.fromisoformat(locked_until.replace("Z", "+00:00"))
+        except ValueError:
+            return
+    if locked_until > datetime.now(timezone.utc):
+        raise HTTPException(status_code=423, detail="Account is locked. Try again later.")
+
+
 @router.post("/register", response_model=TokenResponse)
-def register(data: UserCreate, db: SupabaseDB = Depends(get_db)):
+@limiter.limit("5/minute")
+def register(request: Request, data: UserCreate, db: SupabaseDB = Depends(get_db)):
     if not data.email and not data.phone:
         raise HTTPException(status_code=400, detail="Email or phone is required")
     if data.email:
@@ -80,29 +111,28 @@ def register(data: UserCreate, db: SupabaseDB = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(data: UserLogin, db: SupabaseDB = Depends(get_db)):
+@limiter.limit("10/minute")
+def login(request: Request, data: UserLogin, db: SupabaseDB = Depends(get_db)):
     user = None
     if data.email:
         user = db.get_one("users", {"email": f"eq.{data.email}"})
     elif data.phone:
         user = db.get_one("users", {"phone": f"eq.{data.phone}"})
 
-    if not user or not _safe_verify(data.password, user.get("password_hash", "")):
+    if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     if not user.get("is_active", False):
         raise HTTPException(status_code=403, detail="Account is disabled")
 
-    locked_until = user.get("locked_until")
-    if locked_until:
-        if isinstance(locked_until, str):
-            from datetime import datetime
-            locked_until = datetime.fromisoformat(locked_until.replace("Z", "+00:00"))
-        if locked_until > datetime.now(timezone.utc):
-            raise HTTPException(status_code=423, detail="Account is locked. Try again later.")
+    _check_lockout(user)
+
+    if not _safe_verify(data.password, user.get("password_hash", "")):
+        _register_failed_attempt(db, user)
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
     try:
-        db.update("users", user["id"], {"failed_login_attempts": 0})
+        db.update("users", user["id"], {"failed_login_attempts": 0, "locked_until": None})
     except Exception as e:
         logger.error(f"Login update error: {e}")
 
@@ -114,21 +144,20 @@ def login(data: UserLogin, db: SupabaseDB = Depends(get_db)):
 
 
 @router.post("/admin-login", response_model=TokenResponse)
-def admin_login(data: AdminLogin, db: SupabaseDB = Depends(get_db)):
+@limiter.limit("10/minute")
+def admin_login(request: Request, data: AdminLogin, db: SupabaseDB = Depends(get_db)):
     user = db.get_one("users", {"email": f"eq.{data.email}", "role_id": f"eq.1"})
-    if not user or not _safe_verify(data.password, user.get("password_hash", "")):
+    if not user:
         raise HTTPException(status_code=401, detail="Invalid admin credentials")
 
     if not user.get("is_active", False):
         raise HTTPException(status_code=403, detail="Account is disabled")
 
-    locked_until = user.get("locked_until")
-    if locked_until:
-        if isinstance(locked_until, str):
-            from datetime import datetime
-            locked_until = datetime.fromisoformat(locked_until.replace("Z", "+00:00"))
-        if locked_until > datetime.now(timezone.utc):
-            raise HTTPException(status_code=423, detail="Account is locked. Try again later.")
+    _check_lockout(user)
+
+    if not _safe_verify(data.password, user.get("password_hash", "")):
+        _register_failed_attempt(db, user)
+        raise HTTPException(status_code=401, detail="Invalid admin credentials")
 
     if user.get("totp_enabled", False):
         return {
@@ -140,7 +169,7 @@ def admin_login(data: AdminLogin, db: SupabaseDB = Depends(get_db)):
         }
 
     try:
-        db.update("users", user["id"], {"failed_login_attempts": 0})
+        db.update("users", user["id"], {"failed_login_attempts": 0, "locked_until": None})
     except Exception as e:
         logger.error(f"Admin login update error: {e}")
 
@@ -152,19 +181,27 @@ def admin_login(data: AdminLogin, db: SupabaseDB = Depends(get_db)):
 
 
 @router.post("/admin-login-totp", response_model=TokenResponse)
-def admin_login_totp(data: TOTPVerifyRequest, user_id: int, db: SupabaseDB = Depends(get_db)):
+@limiter.limit("10/minute")
+def admin_login_totp(request: Request, data: TOTPVerifyRequest, user_id: int, db: SupabaseDB = Depends(get_db)):
     user = db.get_by_id("users", user_id)
     if not user or not user.get("totp_enabled", False):
         raise HTTPException(status_code=400, detail="TOTP not enabled")
 
     if not verify_totp(user.get("totp_secret", ""), data.code):
+        _register_failed_attempt(db, user)
         raise HTTPException(status_code=401, detail="Invalid TOTP code")
+
+    try:
+        db.update("users", user["id"], {"failed_login_attempts": 0, "locked_until": None})
+    except Exception as e:
+        logger.error(f"TOTP login update error: {e}")
 
     return _create_tokens(user, db)
 
 
 @router.post("/refresh", response_model=TokenResponse)
-def refresh_token(data: RefreshRequest, db: SupabaseDB = Depends(get_db)):
+@limiter.limit("30/minute")
+def refresh_token(request: Request, data: RefreshRequest, db: SupabaseDB = Depends(get_db)):
     payload = decode_token(data.refresh_token)
     if payload is None or payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Invalid refresh token")
@@ -200,10 +237,12 @@ def get_me(user: dict = Depends(get_current_user)):
 
 
 @router.post("/totp/setup", response_model=TOTPSetupResponse)
-def setup_totp(user: dict = Depends(require_admin)):
+@limiter.limit("10/minute")
+def setup_totp(request: Request, user: dict = Depends(require_admin), db: SupabaseDB = Depends(get_db)):
     secret = generate_totp_secret()
     uri = get_totp_uri(secret, user.get("email") or user.get("name", ""))
     qrcode = generate_totp_qrcode(uri)
+    db.update("users", user["id"], {"totp_secret": secret, "totp_enabled": False})
     return {"secret": secret, "uri": uri, "qrcode": qrcode}
 
 
