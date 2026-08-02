@@ -1,13 +1,46 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict
+import json
 from app.services.db import SupabaseDB, get_db
 from app.core.dependencies import require_admin
-from app.schemas.setting import SettingCreate, SettingUpdate, SettingResponse, GeneralSettings
+from app.schemas.setting import (
+    SettingCreate, SettingUpdate, SettingResponse, GeneralSettings,
+    DeliveryWilaya, DeliveryWilayasUpdate,
+)
 
 router = APIRouter()
 
 PUBLIC_KEYS = ["store_name", "store_description", "facebook_url", "instagram_url",
                "whatsapp_number", "phone", "email", "address", "working_hours"]
+
+DELIVERY_KEY = "delivery_wilayas"
+
+
+def _get_delivery_wilayas(db: SupabaseDB) -> list[dict]:
+    row = db.get_one("settings", {"key": f"eq.{DELIVERY_KEY}"})
+    if not row or not row.get("value"):
+        return []
+    try:
+        data = json.loads(row["value"])
+        return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+@router.get("/delivery-wilayas", response_model=List[DeliveryWilaya])
+def get_delivery_wilayas(db: SupabaseDB = Depends(get_db)):
+    return _get_delivery_wilayas(db)
+
+
+@router.put("/delivery-wilayas", response_model=List[DeliveryWilaya])
+def update_delivery_wilayas(data: DeliveryWilayasUpdate, db: SupabaseDB = Depends(get_db), admin=Depends(require_admin)):
+    existing = db.get_one("settings", {"key": f"eq.{DELIVERY_KEY}"})
+    value = json.dumps([item.model_dump() for item in data.items], ensure_ascii=False)
+    if existing:
+        db.update("settings", existing["id"], {"value": value}, id_field="id")
+    else:
+        db.insert("settings", {"key": DELIVERY_KEY, "value": value})
+    return data.items
 
 
 @router.get("/public", response_model=Dict[str, str])

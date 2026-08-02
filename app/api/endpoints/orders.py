@@ -138,7 +138,8 @@ def create_order(data: OrderCreate, db: SupabaseDB = Depends(get_db)):
         "wilaya": data.wilaya,
         "commune": data.commune,
         "status": "pending",
-        "total_price": total_price,
+        "total_price": total_price + (data.delivery_fee or 0),
+        "delivery_fee": data.delivery_fee or 0,
     }
     if data.guest_email:
         order_data["guest_email"] = data.guest_email

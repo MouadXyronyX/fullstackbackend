@@ -19,6 +19,7 @@ class OrderCreate(BaseModel):
     commune: str = Field(..., min_length=1)
     address: Optional[str] = Field(None, min_length=5)
     note: Optional[str] = None
+    delivery_fee: Optional[float] = Field(0, ge=0)
     items: List[OrderItemCreate] = Field(..., min_length=1)
     captcha_token: Optional[str] = None
 
@@ -48,6 +49,7 @@ class OrderResponse(BaseModel):
     note: Optional[str]
     status: str
     total_price: float
+    delivery_fee: Optional[float] = 0
     created_at: Optional[datetime]
     items: List[OrderItemResponse] = []
 

@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Optional, List
 from datetime import datetime
 
 
@@ -32,3 +32,13 @@ class GeneralSettings(BaseModel):
     email: str = ""
     address: str = ""
     working_hours: str = ""
+
+
+class DeliveryWilaya(BaseModel):
+    code: str = Field(..., min_length=1)
+    ar_name: str = Field(..., min_length=1)
+    price: float = Field(..., ge=0)
+
+
+class DeliveryWilayasUpdate(BaseModel):
+    items: List[DeliveryWilaya]
