@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     # Frontend
     frontend_url: str = "http://localhost:5173"
 
+    # GitHub Storage (for product images)
+    github_token: str = ""
+    github_repo_owner: str = ""
+    github_repo_name: str = ""
+    github_branch: str = "main"
+
     model_config = ConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 

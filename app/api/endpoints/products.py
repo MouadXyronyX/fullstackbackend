@@ -9,9 +9,46 @@ router = APIRouter()
 
 def _load_variants(product_id: int, db: SupabaseDB) -> list:
     try:
-        return db.get_all("product_variants", filters={"product_id": f"eq.{product_id}"}, order="name.asc")
+        return db.get_all(
+            "product_variants",
+            filters={"product_id": f"eq.{product_id}"},
+            order="name.asc",
+        )
     except Exception:
         return []
+
+
+def _load_related(product_ids: list, db: SupabaseDB) -> tuple[dict, dict]:
+    """Fetch images and variants for many products in 2 batched calls (avoids N+1)."""
+    images_by_product: dict = {}
+    variants_by_product: dict = {}
+    if not product_ids:
+        return images_by_product, variants_by_product
+
+    ids = ",".join(str(i) for i in product_ids)
+    try:
+        images = db.get_all(
+            "product_images",
+            filters={"product_id": f"in.({ids})"},
+            order="order.asc",
+        )
+        for img in images:
+            images_by_product.setdefault(img["product_id"], []).append(img)
+    except Exception:
+        pass
+
+    try:
+        variants = db.get_all(
+            "product_variants",
+            filters={"product_id": f"in.({ids})"},
+            order="name.asc",
+        )
+        for v in variants:
+            variants_by_product.setdefault(v["product_id"], []).append(v)
+    except Exception:
+        pass
+
+    return images_by_product, variants_by_product
 
 
 @router.get("/", response_model=List[ProductResponse])

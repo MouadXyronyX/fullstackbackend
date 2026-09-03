@@ -9,7 +9,7 @@ from app.core.config import get_settings
 from app.core.redis_client import init_redis, close_redis
 from app.core.rate_limit import limiter
 from app.middleware.security_headers import SecurityHeadersMiddleware
-from app.api.endpoints import auth, products, categories, orders, pages, users, chats, settings, dashboard
+from app.api.endpoints import auth, products, categories, orders, pages, users, chats, settings, dashboard, upload
 from app.websocket import chat as chat_websocket
 from app.services.db import SupabaseDB
 
@@ -45,13 +45,17 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 # CORS — support multiple origins via comma-separated FRONTEND_URL
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+cors_kwargs = {
+    "allow_origins": allowed_origins,
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+if app_settings.debug:
+    # Local dev only — allow any host/IP so dynamic public IPs keep working.
+    # Production (DEBUG=false) keeps the strict whitelist above.
+    cors_kwargs["allow_origin_regex"] = r"https?://.*"
+app.add_middleware(CORSMiddleware, **cors_kwargs)
 
 # Rate limiting
 app.state.limiter = limiter
@@ -109,6 +113,7 @@ app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(chats.router, prefix="/api/chats", tags=["Chats"])
 app.include_router(settings.router, prefix="/api/settings", tags=["Settings"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"])
+app.include_router(upload.router, prefix="/api", tags=["Upload"])
 
 # WebSocket
 app.include_router(chat_websocket.router, prefix="/ws", tags=["WebSocket"])
