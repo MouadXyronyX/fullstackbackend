@@ -45,13 +45,9 @@ def update_delivery_wilayas(data: DeliveryWilayasUpdate, db: SupabaseDB = Depend
 
 @router.get("/public", response_model=Dict[str, str])
 def get_public_settings(db: SupabaseDB = Depends(get_db)):
-    settings = db.get_all("settings")
-    result = {}
-    keys_set = set(PUBLIC_KEYS)
-    for s in settings:
-        if s.get("key") in keys_set:
-            result[s["key"]] = s.get("value") or ""
-    return result
+    keys_filter = ",".join(PUBLIC_KEYS)
+    settings = db.get_all("settings", filters={"key": f"in.({keys_filter})"})
+    return {s["key"]: s.get("value") or "" for s in settings}
 
 
 @router.get("/", response_model=List[SettingResponse])

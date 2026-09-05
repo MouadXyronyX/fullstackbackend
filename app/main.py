@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi import _rate_limit_exceeded_handler
+from starlette.middleware.gzip import GZipMiddleware
 from app.core.config import get_settings
 from app.core.redis_client import init_redis, close_redis
 from app.core.rate_limit import limiter
@@ -56,6 +57,9 @@ if app_settings.debug:
     # Production (DEBUG=false) keeps the strict whitelist above.
     cors_kwargs["allow_origin_regex"] = r"https?://.*"
 app.add_middleware(CORSMiddleware, **cors_kwargs)
+
+# GZip compression — compress all responses > 500 bytes
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # Rate limiting
 app.state.limiter = limiter

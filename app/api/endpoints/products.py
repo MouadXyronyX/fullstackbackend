@@ -78,13 +78,12 @@ def list_products(
                           filters=filters if filters else None,
                           order="created_at.desc",
                           limit=limit, offset=skip)
-    result = []
+    product_ids = [p["id"] for p in products]
+    images_by_product, variants_by_product = _load_related(product_ids, db)
     for p in products:
-        images = db.get_all("product_images", filters={"product_id": f"eq.{p['id']}"}, order="order.asc")
-        p["images"] = images
-        p["variants"] = _load_variants(p["id"], db)
-        result.append(ProductResponse.model_validate(p))
-    return result
+        p["images"] = images_by_product.get(p["id"], [])
+        p["variants"] = variants_by_product.get(p["id"], [])
+    return [ProductResponse.model_validate(p) for p in products]
 
 
 @router.get("/count")

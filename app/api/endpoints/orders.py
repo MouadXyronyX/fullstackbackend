@@ -13,10 +13,15 @@ router = APIRouter()
 
 
 def _enrich_items(items: list[dict], db: SupabaseDB) -> list[dict]:
-    for item in items:
-        product = db.get_by_id("products", item["product_id"])
-        if product:
-            item["product_name"] = product.get("name")
+    product_ids = list({item["product_id"] for item in items})
+    if product_ids:
+        ids_str = ",".join(str(i) for i in product_ids)
+        products = db.get_all("products", columns="id,name", filters={"id": f"in.({ids_str})"})
+        products_map = {p["id"]: p for p in products}
+        for item in items:
+            product = products_map.get(item["product_id"])
+            if product:
+                item["product_name"] = product.get("name")
     return items
 
 
