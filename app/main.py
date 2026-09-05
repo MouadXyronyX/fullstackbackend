@@ -73,6 +73,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 @app.on_event("startup")
 async def startup():
     from datetime import datetime, timedelta
+    from app.core.cache import init_sync_redis
     try:
         db = SupabaseDB()
         cutoff = (datetime.utcnow() - timedelta(days=15)).isoformat()
@@ -87,6 +88,7 @@ async def startup():
     except Exception:
         pass
     await init_redis()
+    init_sync_redis(app_settings.redis_url)
 
 
 @app.on_event("shutdown")

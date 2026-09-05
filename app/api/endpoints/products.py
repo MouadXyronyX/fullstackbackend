@@ -1,7 +1,9 @@
+import json
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List
 from app.services.db import SupabaseDB, get_db
 from app.core.dependencies import require_admin
+from app.core.cache import cache_get, cache_set, cache_delete_pattern
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, ProductFilter
 
 router = APIRouter()
@@ -74,6 +76,11 @@ def list_products(
     if search:
         filters["name"] = f"ilike.%{search}%"
 
+    cache_key = f"products:list:{json.dumps(filters, sort_keys=True) if filters else 'all'}:{skip}:{limit}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return [ProductResponse.model_validate(p) for p in cached]
+
     products = db.get_all("products", columns="*",
                           filters=filters if filters else None,
                           order="created_at.desc",
@@ -83,6 +90,7 @@ def list_products(
     for p in products:
         p["images"] = images_by_product.get(p["id"], [])
         p["variants"] = variants_by_product.get(p["id"], [])
+    cache_set(cache_key, products)
     return [ProductResponse.model_validate(p) for p in products]
 
 
@@ -97,18 +105,29 @@ def count_products(
         filters["category_id"] = f"eq.{category_id}"
     if search:
         filters["name"] = f"ilike.%{search}%"
+    cache_key = f"products:count:{json.dumps(filters, sort_keys=True) if filters else 'all'}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
     count = db.count("products", filters=filters if filters else None)
-    return {"count": count}
+    result = {"count": count}
+    cache_set(cache_key, result)
+    return result
 
 
 @router.get("/{product_id}", response_model=ProductResponse)
 def get_product(product_id: int, db: SupabaseDB = Depends(get_db)):
+    cache_key = f"products:detail:{product_id}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return ProductResponse.model_validate(cached)
     product = db.get_by_id("products", product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     images = db.get_all("product_images", filters={"product_id": f"eq.{product_id}"}, order="order.asc")
     product["images"] = images
     product["variants"] = _load_variants(product_id, db)
+    cache_set(cache_key, product, ttl=60)
     return ProductResponse.model_validate(product)
 
 
@@ -136,6 +155,8 @@ def create_product(data: ProductCreate, db: SupabaseDB = Depends(get_db), admin=
             })
     except Exception:
         pass
+    cache_delete_pattern("products:*")
+    cache_delete_pattern("categories:*")
     images = db.get_all("product_images", filters={"product_id": f"eq.{product['id']}"}, order="order.asc")
     product["images"] = images
     product["variants"] = _load_variants(product["id"], db)
@@ -174,6 +195,8 @@ def update_product(product_id: int, data: ProductUpdate, db: SupabaseDB = Depend
                 })
         except Exception:
             pass
+    cache_delete_pattern("products:*")
+    cache_delete_pattern("categories:*")
     product = db.get_by_id("products", product_id)
     images = db.get_all("product_images", filters={"product_id": f"eq.{product_id}"}, order="order.asc")
     product["images"] = images
@@ -192,4 +215,6 @@ def delete_product(product_id: int, db: SupabaseDB = Depends(get_db), admin=Depe
     except Exception:
         pass
     db.delete("products", product_id)
+    cache_delete_pattern("products:*")
+    cache_delete_pattern("categories:*")
     return {"detail": "Product deleted successfully"}

@@ -3,6 +3,7 @@ from typing import List, Dict
 import json
 from app.services.db import SupabaseDB, get_db
 from app.core.dependencies import require_admin
+from app.core.cache import cache_get, cache_set, cache_delete_pattern
 from app.schemas.setting import (
     SettingCreate, SettingUpdate, SettingResponse, GeneralSettings,
     DeliveryWilaya, DeliveryWilayasUpdate,
@@ -40,14 +41,21 @@ def update_delivery_wilayas(data: DeliveryWilayasUpdate, db: SupabaseDB = Depend
         db.update("settings", existing["id"], {"value": value}, id_field="id")
     else:
         db.insert("settings", {"key": DELIVERY_KEY, "value": value})
+    cache_delete_pattern("settings:*")
     return data.items
 
 
 @router.get("/public", response_model=Dict[str, str])
 def get_public_settings(db: SupabaseDB = Depends(get_db)):
+    cache_key = "settings:public"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
     keys_filter = ",".join(PUBLIC_KEYS)
     settings = db.get_all("settings", filters={"key": f"in.({keys_filter})"})
-    return {s["key"]: s.get("value") or "" for s in settings}
+    result = {s["key"]: s.get("value") or "" for s in settings}
+    cache_set(cache_key, result, ttl=120)
+    return result
 
 
 @router.get("/", response_model=List[SettingResponse])
@@ -75,4 +83,5 @@ def update_general_settings(data: GeneralSettings, admin=Depends(require_admin),
             db.update("settings", existing["id"], {"value": str(value)}, id_field="id")
         else:
             db.insert("settings", {"key": key, "value": str(value)})
+    cache_delete_pattern("settings:*")
     return data
